@@ -35,7 +35,7 @@ Team review requests are shown as `@org/team` and are always considered pending.
 Selecting a PR and pressing <kbd>enter</kbd>:
 
 1. removes the review request for every **pending** (red) reviewer,
-2. waits 5 seconds (`--wait`),
+2. waits 10 seconds (`--wait`),
 3. requests their review again.
 
 GitHub then sends them a fresh "review requested" notification. Reviewers who already approved or commented are left untouched.
@@ -69,7 +69,7 @@ pr-status --dry-run                        # try it without touching reviewers
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
 | `-R`, `--repo OWNER/REPO` | all repos | Only show PRs from these repos. Repeatable or comma-separated. |
-| `--wait DURATION` | `5s` | Delay between removing and re-requesting reviewers. |
+| `--wait DURATION` | `10s` | Delay between removing and re-requesting reviewers. |
 | `--refresh DURATION` | `5m` | Auto-refresh interval, `0` to disable. Skipped while a ping is in progress. |
 | `--dry-run` | off | Run the whole flow without calling the GitHub write APIs. |
 
