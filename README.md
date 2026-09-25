@@ -85,6 +85,10 @@ pr-status --dry-run                        # try it without touching reviewers
 | <kbd>?</kbd> | Show all key bindings |
 | <kbd>q</kbd> | Quit |
 
+## Browser
+
+<kbd>o</kbd> uses the same browser as `gh --web`: `GH_BROWSER`, then `gh config get browser`, then `BROWSER`. If none of them is set and you are running under WSL, the PR opens in your **Windows default browser** (via `wslview`, or `rundll32.exe` if wslu isn't installed) instead of a Linux browser running through WSLg.
+
 ## API usage
 
 Listing PRs is a single GraphQL query costing 1 point, out of the 5,000 points per hour GitHub allows. The default 5-minute auto-refresh therefore uses about 12 points per hour. A ping makes two REST calls: `DELETE` then `POST` on `/repos/{owner}/{repo}/pulls/{number}/requested_reviewers`.
@@ -98,5 +102,6 @@ Only the 50 most recently updated open PRs are listed.
 | `main.go` | Flag parsing and program startup |
 | `github.go` | GraphQL query, reviewer status mapping, remove/re-request calls |
 | `ui.go` | Bubble Tea model, list rendering and styles |
+| `browser.go` | Opening PRs in the browser (WSL-aware) |
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), [Lip Gloss](https://github.com/charmbracelet/lipgloss) and [go-gh](https://github.com/cli/go-gh).

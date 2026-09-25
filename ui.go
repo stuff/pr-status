@@ -13,7 +13,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/cli/go-gh/v2/pkg/browser"
 )
 
 var (
@@ -98,6 +97,10 @@ type removedMsg struct{ err error }
 type addedMsg struct{ err error }
 type countdownMsg struct{}
 type autoRefreshMsg struct{}
+type openedMsg struct {
+	pr  PR
+	err error
+}
 
 type step int
 
@@ -217,6 +220,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.list.SetItems(items)
 
+	case openedMsg:
+		if msg.err != nil {
+			m.status = errorStyle.Render("Failed to open browser: " + msg.err.Error())
+		} else {
+			m.status = faintStyle.Render(fmt.Sprintf("Opened %s#%d in browser", msg.pr.Repo, msg.pr.Number))
+		}
+		return m, nil
+
 	case autoRefreshMsg:
 		next := m.scheduleRefresh()
 		if m.busy() {
@@ -287,7 +298,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startLoad()
 		case key.Matches(msg, openKey):
 			if it, ok := m.list.SelectedItem().(prItem); ok {
-				return m, openBrowser(it.URL)
+				return m, openBrowser(it.PR)
 			}
 		}
 	}
@@ -328,10 +339,9 @@ func countdown() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return countdownMsg{} })
 }
 
-func openBrowser(url string) tea.Cmd {
+func openBrowser(pr PR) tea.Cmd {
 	return func() tea.Msg {
-		_ = browser.New("", io.Discard, io.Discard).Browse(url)
-		return nil
+		return openedMsg{pr, openURL(pr.URL)}
 	}
 }
 
