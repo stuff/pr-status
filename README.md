@@ -8,7 +8,7 @@ A terminal UI that lists your open GitHub pull requests with the review status o
   3 PRs
 
 ▌ acme/api#128  feat: add rate limiting middleware
-▌ ● @alice  ✓ @bob  • @carol
+▌ ● @alice  ✓ @bob  • @carol    ↻ pinged 2×, last 3h ago
 
   acme/web#342  fix: broken redirect after login
   ● @acme/frontend  ✗ @dave
@@ -28,19 +28,26 @@ A terminal UI that lists your open GitHub pull requests with the review status o
 | `•` | gray | commented |
 | `✗` | gray | changes requested |
 
-Team review requests are shown as `@org/team` and are always considered pending.
+Team review requests are shown as `@org/team` and are always considered pending, but teams are **never pinged**: re-requesting a team with auto-assignment enabled could assign the review to a different member.
 
 ## Pinging reviewers
 
-Selecting a PR and pressing <kbd>enter</kbd>:
+Selecting a PR and pressing <kbd>enter</kbd> asks for confirmation (<kbd>y</kbd> to confirm, any other key cancels), then:
 
-1. removes the review request for every **pending** (red) reviewer,
+1. removes the review request for every **pending** (red) reviewer, except teams,
 2. waits 10 seconds (`--wait`),
-3. requests their review again.
+3. requests their review again,
+4. posts a `ping @alice @bob` comment on the PR (disable with `--no-comment`).
 
-GitHub then sends them a fresh "review requested" notification. Reviewers who already approved or commented are left untouched.
+The re-request sends a fresh "review requested" notification on GitHub, but integrations don't always relay it (in our Slack setup, a re-request alone sent nothing), so the comment's @mentions make sure people actually get pinged. Reviewers who already approved or commented are left untouched.
 
-If you press <kbd>ctrl+c</kbd> during the wait, the reviewers are re-requested immediately before quitting, so nobody is left removed.
+If you press <kbd>ctrl+c</kbd> during the wait, the reviewers are re-requested immediately before quitting (without the comment), so nobody is left removed.
+
+### Ping history
+
+PRs you already pinged show `↻ pinged N×, last …` next to their reviewers. Press <kbd>h</kbd> to see every ping on the selected PR, with its date and reviewers.
+
+The history is read from the PR's GitHub timeline, not stored locally: a ping is a review request **you** removed and then re-requested for the same reviewer within 2 minutes. It therefore also includes pings made from another machine or by hand in the GitHub UI, but not `--dry-run` runs. Only the last 100 review-request events of each PR are scanned.
 
 ## Requirements
 
@@ -71,17 +78,19 @@ pr-status --dry-run                        # try it without touching reviewers
 | `-R`, `--repo OWNER/REPO` | all repos | Only show PRs from these repos. Repeatable or comma-separated. |
 | `--wait DURATION` | `10s` | Delay between removing and re-requesting reviewers. |
 | `--refresh DURATION` | `5m` | Auto-refresh interval, `0` to disable. Skipped while a ping is in progress. |
-| `--dry-run` | off | Run the whole flow without calling the GitHub write APIs. |
+| `--no-comment` | off | Only re-request reviews, don't post the `ping @…` comment. |
+| `--dry-run` | off | Run the whole flow without calling the GitHub write APIs (no re-request, no comment). |
 
 ### Keys
 
 | Key | Action |
 | --- | ------ |
 | <kbd>↑</kbd> / <kbd>↓</kbd> (or <kbd>k</kbd> / <kbd>j</kbd>) | Move the selection |
-| <kbd>enter</kbd> | Ping pending reviewers of the selected PR |
+| <kbd>enter</kbd> | Ping pending reviewers of the selected PR (asks for confirmation) |
+| <kbd>h</kbd> | Show the ping history of the selected PR |
 | <kbd>r</kbd> | Refresh now |
 | <kbd>o</kbd> | Open the PR in your browser |
-| <kbd>/</kbd> | Filter PRs by repo or title |
+| <kbd>/</kbd> | Filter PRs by repo, number or title |
 | <kbd>?</kbd> | Show all key bindings |
 | <kbd>q</kbd> | Quit |
 
@@ -91,7 +100,7 @@ pr-status --dry-run                        # try it without touching reviewers
 
 ## API usage
 
-Listing PRs is a single GraphQL query costing 1 point, out of the 5,000 points per hour GitHub allows. The default 5-minute auto-refresh therefore uses about 12 points per hour. A ping makes two REST calls: `DELETE` then `POST` on `/repos/{owner}/{repo}/pulls/{number}/requested_reviewers`.
+Listing PRs is a single GraphQL query costing 2 points, out of the 5,000 points per hour GitHub allows. The default 5-minute auto-refresh therefore uses about 24 points per hour. A ping makes up to three REST calls: `DELETE` then `POST` on `/repos/{owner}/{repo}/pulls/{number}/requested_reviewers`, then `POST /repos/{owner}/{repo}/issues/{number}/comments`.
 
 Only the 50 most recently updated open PRs are listed.
 

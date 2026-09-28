@@ -14,6 +14,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "simulate the re-request without changing reviewers")
 	wait := flag.Duration("wait", 10*time.Second, "delay between removing and re-requesting reviewers")
 	refresh := flag.Duration("refresh", 5*time.Minute, "auto-refresh interval (0 to disable)")
+	noComment := flag.Bool("no-comment", false, `don't post a "ping @reviewers" comment after re-requesting`)
 
 	var repos []string
 	addRepos := func(v string) error {
@@ -31,7 +32,7 @@ func main() {
 	flag.Func("R", "shorthand for --repo", addRepos)
 	flag.Parse()
 
-	if _, err := tea.NewProgram(newModel(*dryRun, *wait, *refresh, repos), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(newModel(options{dryRun: *dryRun, comment: !*noComment, wait: *wait, refresh: *refresh, repos: repos}), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

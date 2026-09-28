@@ -22,7 +22,6 @@ const (
 
 type Reviewer struct {
 	Login  string // user login, or "org/slug" for teams
-	Slug   string // team slug (teams only)
 	IsTeam bool
 	State  ReviewState
 }
@@ -34,13 +33,26 @@ type PR struct {
 	URL       string
 	IsDraft   bool
 	Reviewers []Reviewer
+	Pings     []Ping // oldest first
 }
 
-// Pending returns the reviewers who have been requested but haven't reviewed yet.
-func (p PR) Pending() []Reviewer {
+// Ping is one re-request of reviewers: a review request removed then added
+// back shortly after, both by me.
+type Ping struct {
+	At        time.Time
+	Reviewers []string
+}
+
+// Max delay between the removal and the re-request for them to count as a ping.
+const pingMaxGap = 2 * time.Minute
+
+// Pingable returns the users who have been requested but haven't reviewed yet.
+// Teams are left out: re-requesting a team with auto-assignment enabled could
+// assign it to a different member.
+func (p PR) Pingable() []Reviewer {
 	var out []Reviewer
 	for _, r := range p.Reviewers {
-		if r.State == Pending {
+		if r.State == Pending && !r.IsTeam {
 			out = append(out, r)
 		}
 	}
@@ -63,16 +75,28 @@ query($q: String!) {
             requestedReviewer {
               __typename
               ... on User { login }
-              ... on Team { slug combinedSlug }
+              ... on Team { combinedSlug }
             }
           }
         }
         latestReviews(first: 50) {
           nodes { author { login } state }
         }
+        timelineItems(last: 100, itemTypes: [REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT]) {
+          nodes {
+            __typename
+            ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ...reviewerName } }
+            ... on ReviewRequestRemovedEvent { createdAt actor { login } requestedReviewer { ...reviewerName } }
+          }
+        }
       }
     }
   }
+}
+
+fragment reviewerName on RequestedReviewer {
+  ... on User { login }
+  ... on Team { combinedSlug }
 }`
 
 type prsResponse struct {
@@ -89,7 +113,6 @@ type prsResponse struct {
 					RequestedReviewer struct {
 						Typename     string `json:"__typename"`
 						Login        string
-						Slug         string
 						CombinedSlug string
 					}
 				}
@@ -100,7 +123,20 @@ type prsResponse struct {
 					State  string
 				}
 			}
+			TimelineItems struct {
+				Nodes []timelineEvent
+			}
 		}
+	}
+}
+
+type timelineEvent struct {
+	Typename          string `json:"__typename"`
+	CreatedAt         time.Time
+	Actor             struct{ Login string }
+	RequestedReviewer struct {
+		Login        string
+		CombinedSlug string
 	}
 }
 
@@ -155,7 +191,7 @@ func fetchPRs(repos []string) ([]PR, error) {
 				pr.Reviewers = append(pr.Reviewers, Reviewer{Login: rv.Login, State: state})
 				seen[rv.Login] = true
 			case "Team":
-				pr.Reviewers = append(pr.Reviewers, Reviewer{Login: rv.CombinedSlug, Slug: rv.Slug, IsTeam: true, State: Pending})
+				pr.Reviewers = append(pr.Reviewers, Reviewer{Login: rv.CombinedSlug, IsTeam: true, State: Pending})
 			}
 		}
 		// People who reviewed without (or no longer) being requested.
@@ -170,9 +206,42 @@ func fetchPRs(repos []string) ([]PR, error) {
 			pr.Reviewers = append(pr.Reviewers, Reviewer{Login: login, State: reviewed[login]})
 		}
 
+		pr.Pings = findPings(n.TimelineItems.Nodes, resp.Viewer.Login)
 		prs = append(prs, pr)
 	}
 	return prs, nil
+}
+
+// findPings pairs my "review request removed" events with my following
+// "review requested" event for the same reviewer, and groups them by time.
+func findPings(events []timelineEvent, me string) []Ping {
+	removedAt := map[string]time.Time{}
+	var pings []Ping
+	for _, e := range events {
+		name := e.RequestedReviewer.Login
+		if name == "" {
+			name = e.RequestedReviewer.CombinedSlug
+		}
+		if name == "" || e.Actor.Login != me {
+			continue
+		}
+		switch e.Typename {
+		case "ReviewRequestRemovedEvent":
+			removedAt[name] = e.CreatedAt
+		case "ReviewRequestedEvent":
+			removed, ok := removedAt[name]
+			delete(removedAt, name)
+			if !ok || e.CreatedAt.Sub(removed) > pingMaxGap {
+				continue
+			}
+			if last := len(pings) - 1; last >= 0 && e.CreatedAt.Sub(pings[last].At) < pingMaxGap {
+				pings[last].Reviewers = append(pings[last].Reviewers, name)
+			} else {
+				pings = append(pings, Ping{At: e.CreatedAt, Reviewers: []string{name}})
+			}
+		}
+	}
+	return pings
 }
 
 func searchQuery(repos []string) string {
@@ -183,23 +252,37 @@ func searchQuery(repos []string) string {
 	return q
 }
 
+// postPingComment comments "ping @a @b" on the PR, since a re-request alone
+// doesn't reach every notification channel (e.g. Slack).
+func postPingComment(pr PR, reviewers []Reviewer, dryRun bool) error {
+	if dryRun {
+		time.Sleep(500 * time.Millisecond)
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"body": "ping " + reviewerNames(reviewers)})
+	if err != nil {
+		return err
+	}
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("repos/%s/issues/%d/comments", pr.Repo, pr.Number)
+	return client.Post(path, bytes.NewReader(payload), nil)
+}
+
 // setReviewRequests removes (method DELETE) or adds (method POST) review
-// requests for the given reviewers on a PR.
+// requests for the given users on a PR.
 func setReviewRequests(method string, pr PR, reviewers []Reviewer, dryRun bool) error {
 	if dryRun {
 		time.Sleep(500 * time.Millisecond)
 		return nil
 	}
 	body := struct {
-		Reviewers     []string `json:"reviewers"`
-		TeamReviewers []string `json:"team_reviewers"`
-	}{Reviewers: []string{}, TeamReviewers: []string{}}
+		Reviewers []string `json:"reviewers"`
+	}{}
 	for _, r := range reviewers {
-		if r.IsTeam {
-			body.TeamReviewers = append(body.TeamReviewers, r.Slug)
-		} else {
-			body.Reviewers = append(body.Reviewers, r.Login)
-		}
+		body.Reviewers = append(body.Reviewers, r.Login)
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
