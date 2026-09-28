@@ -1,4 +1,4 @@
-module pr-status
+module github.com/stuff/pr-status
 
 go 1.26.3
 

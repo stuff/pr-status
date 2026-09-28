@@ -39,7 +39,7 @@ Selecting a PR and pressing <kbd>enter</kbd> asks for confirmation (<kbd>y</kbd>
 3. requests their review again,
 4. posts a `ping @alice @bob` comment on the PR (disable with `--no-comment`).
 
-The re-request sends a fresh "review requested" notification on GitHub, but integrations don't always relay it (in our Slack setup, a re-request alone sent nothing), so the comment's @mentions make sure people actually get pinged. Reviewers who already approved or commented are left untouched.
+The re-request sends a fresh "review requested" notification on GitHub, but integrations don't always relay it (Slack integrations, for instance, may stay silent on a re-request), so the comment's @mentions make sure people actually get pinged. Reviewers who already approved or commented are left untouched.
 
 If you press <kbd>ctrl+c</kbd> during the wait, the reviewers are re-requested immediately before quitting (without the comment), so nobody is left removed.
 
@@ -57,8 +57,10 @@ The history is read from the PR's GitHub timeline, not stored locally: a ping is
 ## Install
 
 ```bash
-go install .
+go install github.com/stuff/pr-status@latest
 ```
+
+Or from a clone: `go install .`
 
 This builds `pr-status` into `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
 
@@ -114,3 +116,7 @@ Only the 50 most recently updated open PRs are listed.
 | `browser.go` | Opening PRs in the browser (WSL-aware) |
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), [Lip Gloss](https://github.com/charmbracelet/lipgloss) and [go-gh](https://github.com/cli/go-gh).
+
+## License
+
+[MIT](LICENSE)
